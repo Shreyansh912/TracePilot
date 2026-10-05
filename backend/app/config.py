@@ -1,13 +1,11 @@
 """
 backend/app/config.py
-Application settings and robust path configurations.
+Application settings and environment configurations.
 """
 import os
 from pydantic import BaseModel
 
-# Dynamically locate the repository root (the folder containing llm/ and datasets/)
 CURRENT_FILE = os.path.abspath(__file__)
-# __file__ is in backend/app/config.py -> go up 2 levels to get to repository root
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(CURRENT_FILE), "..", ".."))
 
 
@@ -18,6 +16,10 @@ class Settings(BaseModel):
     BPE_DIR: str = os.path.join(ROOT_DIR, "llm", "tokenizer", "bpe_model")
     HOST: str = "127.0.0.1"
     PORT: int = 8000
+
+    # MongoDB Configuration
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017")
+    DATABASE_NAME: str = "tracepilot_db"
 
 
 settings = Settings()

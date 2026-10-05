@@ -1,20 +1,34 @@
 """
 backend/app/main.py
-TracePilot FastAPI Application entry point.
+TracePilot FastAPI Application entry point with MongoDB lifecycle hooks.
 """
+from contextlib import asynccontextmanager
+from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from backend.app.config import settings
+from backend.app.database import connect_to_mongo, close_mongo_connection
 from backend.app.schemas.debug import DebugRequest, DebugResponse
 from backend.app.services.debug_service import debug_service
+from backend.app.services.session_repository import SessionRepository
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize DB Connection pool
+    await connect_to_mongo()
+    yield
+    # Shutdown: Close pool
+    await close_mongo_connection()
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Autonomous AI Debugging Assistant powered by custom small Transformer"
+    description="Autonomous AI Debugging Assistant powered by custom small Transformer",
+    lifespan=lifespan
 )
 
-# Enable CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,12 +48,25 @@ def health_check():
 
 
 @app.post("/debug", response_model=DebugResponse)
-def debug_code(request: DebugRequest):
+async def debug_code(request: DebugRequest):
     try:
         response = debug_service.analyze_and_repair(request)
+        
+        # Persist debug session asynchronously to MongoDB
+        await SessionRepository.create_session(
+            code=request.code,
+            error_message=request.error_message,
+            stack_trace=request.stack_trace,
+            diagnosis=response.dict()
+        )
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/debug/history")
+async def get_history(limit: int = 10):
+    return await SessionRepository.get_recent_sessions(limit=limit)
 
 
 if __name__ == "__main__":
