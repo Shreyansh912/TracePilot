@@ -1,0 +1,110 @@
+# TracePilot Pretraining Corpus - Python Core Patterns
+
+import os
+import sys
+import math
+import json
+from typing import List, Dict, Tuple, Optional, Any, Union
+
+def calculate_statistics(data: List[float]) -> Dict[str, float]:
+    if not data:
+        raise ValueError("Data list cannot be empty")
+    n = len(data)
+    mean = sum(data) / n
+    variance = sum((x - mean) ** 2 for x in data) / n
+    std_dev = math.sqrt(variance)
+    return {"mean": mean, "variance": variance, "std_dev": std_dev}
+
+def binary_search(arr: List[int], target: int) -> int:
+    left = 0
+    right = len(arr) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+
+class Node:
+    def __init__(self, value: int):
+        self.value = value
+        self.next: Optional['Node'] = None
+
+class LinkedList:
+    def __init__(self):
+        self.head: Optional[Node] = None
+
+    def append(self, value: int) -> None:
+        new_node = Node(value)
+        if not self.head:
+            self.head = new_node
+            return
+        curr = self.head
+        while curr.next:
+            curr = curr.next
+        curr.next = new_node
+
+    def to_list(self) -> List[int]:
+        elements = []
+        curr = self.head
+        while curr:
+            elements.append(curr.value)
+            curr = curr.next
+        return elements
+
+def safe_divide(numerator: float, denominator: float) -> float:
+    try:
+        return numerator / denominator
+    except ZeroDivisionError as err:
+        print(f"Error encountered: {err}")
+        return 0.0
+
+def parse_config(filepath: str) -> Dict[str, Any]:
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Configuration file not found: {filepath}")
+    with open(filepath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return data
+
+def merge_sorted_arrays(arr1: List[int], arr2: List[int]) -> List[int]:
+    merged = []
+    i, j = 0, 0
+    while i < len(arr1) and j < len(arr2):
+        if arr1[i] <= arr2[j]:
+            merged.append(arr1[i])
+            i += 1
+        else:
+            merged.append(arr2[j])
+            j += 1
+    merged.extend(arr1[i:])
+    merged.extend(arr2[j:])
+    return merged
+
+def quicksort(arr: List[int]) -> List[int]:
+    if len(arr) <= 1:
+        return arr
+    pivot = arr[len(arr) // 2]
+    left = [x for x in arr if x < pivot]
+    middle = [x for x in arr if x == pivot]
+    right = [x for x in arr if x > pivot]
+    return quicksort(left) + middle + quicksort(right)
+
+class BugTracker:
+    def __init__(self):
+        self.bugs: Dict[str, Dict[str, str]] = {}
+
+    def log_bug(self, bug_id: str, error_type: str, message: str) -> None:
+        self.bugs[bug_id] = {
+            "error_type": error_type,
+            "message": message,
+            "status": "OPEN"
+        }
+
+    def resolve_bug(self, bug_id: str) -> bool:
+        if bug_id in self.bugs:
+            self.bugs[bug_id]["status"] = "RESOLVED"
+            return True
+        return False
