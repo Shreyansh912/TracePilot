@@ -10,6 +10,10 @@ interface DebugResult {
   suggested_fix: string;
   syntax_valid: boolean;
   confidence_score: number;
+  sandbox_executed?: boolean;
+  sandbox_passed?: boolean;
+  sandbox_stdout?: string;
+  sandbox_stderr?: string;
 }
 
 const PRESETS = [
@@ -54,7 +58,7 @@ export const App: React.FC = () => {
 
       if (!response.ok) {
         const errorJson = await response.json().catch(() => null);
-        throw new Error(errorJson?.detail || `API status code: ${response.status}`);
+        throw new Error(errorJson?.detail || `API returned status: ${response.status}`);
       }
 
       const data: DebugResult = await response.json();
@@ -328,6 +332,24 @@ export const App: React.FC = () => {
                     <span style={{ color: '#8b949e' }}>Scope: </span>
                     <strong style={{ color: '#c9d1d9' }}>{result.error_location}</strong>
                   </div>
+
+                  {/* Sandbox Telemetry Badge */}
+                  {result.sandbox_executed && (
+                    <div style={{
+                      backgroundColor: result.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                      border: `1px solid ${result.sandbox_passed ? '#2ea043' : '#f85149'}`,
+                      color: result.sandbox_passed ? '#7ee787' : '#f85149',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}>
+                      {result.sandbox_passed ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                      <span>{result.sandbox_passed ? 'Sandbox: Exit 0' : 'Sandbox: Execution Error'}</span>
+                    </div>
+                  )}
 
                   <div style={{
                     backgroundColor: '#161b22',

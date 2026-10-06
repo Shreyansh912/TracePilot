@@ -1,6 +1,6 @@
 """
 backend/app/services/debug_service.py
-Coordinates AST scope isolation, context assembly, and local LLM inference.
+Coordinates AST scope isolation, local LLM inference, and isolated sandbox verification.
 """
 import os
 import sys
@@ -12,6 +12,7 @@ if ROOT_DIR not in sys.path:
 from backend.app.config import settings
 from backend.app.debugging.analyzer import CodeAnalyzer
 from backend.app.debugging.context_builder import ContextBuilder
+from backend.app.sandbox.runner import CodeSandbox
 from backend.app.schemas.debug import DebugRequest, DebugResponse
 from llm.inference.generate import DebugGenerator
 
@@ -19,6 +20,7 @@ from llm.inference.generate import DebugGenerator
 class DebugService:
     def __init__(self):
         self.analyzer = CodeAnalyzer()
+        self.sandbox = CodeSandbox(timeout_seconds=2.0)
         self.generator = None
 
     def _ensure_generator_loaded(self):
@@ -33,7 +35,7 @@ class DebugService:
             )
 
     def analyze_and_repair(self, request: DebugRequest) -> DebugResponse:
-        # Step 1: Use ContextBuilder to parse traceback and isolate enclosing function scope
+        # 1. AST Scope Isolation & Prompt Assembly
         assembled = ContextBuilder.assemble_prompt(
             code=request.code,
             raw_trace=request.stack_trace,
@@ -45,7 +47,7 @@ class DebugService:
         error_type = assembled.get("error_type", "RuntimeError")
         error_msg = assembled.get("error_message", "Unknown failure")
 
-        # Step 2: Run inference with our hardened generator
+        # 2. Local Model Inference
         self._ensure_generator_loaded()
         try:
             raw_generation = self.generator.generate(
@@ -56,18 +58,24 @@ class DebugService:
                 repetition_penalty=1.45
             ).strip()
 
-            # Clean output: strip out any trailing special tokens
             cleaned_fix = raw_generation.replace("<|eos|>", "").strip()
-
-            # If generation produced pure code or explanation + code, keep valid lines
             lines = [l for l in cleaned_fix.split("\n") if l.strip()]
             suggested_fix = "\n".join(lines) if lines else request.code
-
         except Exception as gen_err:
             suggested_fix = f"# Generation notice: {str(gen_err)}\n{assembled['focused_code']}"
 
-        # Step 3: Verify AST syntax of the generated code
-        is_syntax_valid, syntax_err, _ = self.analyzer.inspect_syntax(suggested_fix)
+        # 3. Static AST Syntax Check
+        is_syntax_valid, _, _ = self.analyzer.inspect_syntax(suggested_fix)
+
+        # 4. Isolated Subprocess Sandbox Verification
+        sandbox_res = self.sandbox.execute(suggested_fix)
+
+        # 5. Composite Confidence Scoring
+        confidence = 0.50
+        if is_syntax_valid:
+            confidence += 0.25
+        if sandbox_res.success:
+            confidence += 0.20
 
         return DebugResponse(
             error_type=error_type,
@@ -75,7 +83,11 @@ class DebugService:
             root_cause=f"{error_type}: {error_msg}",
             suggested_fix=suggested_fix,
             syntax_valid=bool(is_syntax_valid),
-            confidence_score=0.88 if is_syntax_valid else 0.40
+            confidence_score=round(confidence, 2),
+            sandbox_executed=True,
+            sandbox_passed=bool(sandbox_res.success),
+            sandbox_stdout=sandbox_res.stdout or "",
+            sandbox_stderr=sandbox_res.stderr or ""
         )
 
 
