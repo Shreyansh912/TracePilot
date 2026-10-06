@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { DiffViewer } from './components/DiffViewer';
-import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench, TerminalSquare } from 'lucide-react';
+import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench, TerminalSquare, RotateCcw } from 'lucide-react';
+
+interface IterationAttempt {
+  attempt_number: number;
+  patch_code: string;
+  passed: boolean;
+  error_summary: string;
+}
 
 interface DebugResult {
   error_type: string;
@@ -14,6 +21,9 @@ interface DebugResult {
   sandbox_passed?: boolean;
   sandbox_stdout?: string;
   sandbox_stderr?: string;
+  iterations_used?: number;
+  self_corrected?: boolean;
+  attempts?: IterationAttempt[];
 }
 
 const PRESETS = [
@@ -124,9 +134,8 @@ export const App: React.FC = () => {
         flex: 1,
         boxSizing: 'border-box'
       }}>
-        {/* Left Column: Code and Error Trace Input */}
+        {/* Left Column: Code and Error Input */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {/* Source Code Container */}
           <div style={{
             backgroundColor: '#0d1117',
             border: '1px solid #30363d',
@@ -170,7 +179,6 @@ export const App: React.FC = () => {
             />
           </div>
 
-          {/* Traceback Container */}
           <div style={{
             backgroundColor: '#0d1117',
             border: '1px solid #30363d',
@@ -251,7 +259,7 @@ export const App: React.FC = () => {
           )}
         </section>
 
-        {/* Right Column: Diagnosis & Verified Patch */}
+        {/* Right Column: Inspection & Diff Viewer */}
         <section style={{
           backgroundColor: '#0d1117',
           border: '1px solid #30363d',
@@ -309,7 +317,7 @@ export const App: React.FC = () => {
 
             {result && (
               <>
-                {/* Status Badges */}
+                {/* Badges Bar */}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <div style={{
                     backgroundColor: '#161b22',
@@ -351,6 +359,24 @@ export const App: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Self-Correction Loop Badge */}
+                  {result.iterations_used && result.iterations_used > 1 && (
+                    <div style={{
+                      backgroundColor: 'rgba(187, 128, 9, 0.15)',
+                      border: '1px solid #d29922',
+                      color: '#e3b341',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}>
+                      <RotateCcw size={13} />
+                      <span>{result.self_corrected ? `Self-Corrected (Pass on Iteration ${result.iterations_used})` : `Multi-Pass (${result.iterations_used} attempts)`}</span>
+                    </div>
+                  )}
+
                   <div style={{
                     backgroundColor: '#161b22',
                     border: '1px solid #30363d',
@@ -363,7 +389,7 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Root Cause Box */}
+                {/* Root Cause Card */}
                 <div>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
                     DIAGNOSED ROOT CAUSE
@@ -388,7 +414,7 @@ export const App: React.FC = () => {
                   <DiffViewer originalCode={code} repairedCode={result.suggested_fix} />
                 </div>
 
-                {/* Subprocess Sandbox Output Terminal */}
+                {/* Sandbox Output Logs */}
                 {result.sandbox_executed && (
                   <div>
                     <div style={{
