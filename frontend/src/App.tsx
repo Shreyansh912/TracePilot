@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { DiffViewer } from './components/DiffViewer';
-import { Play, CheckCircle, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench } from 'lucide-react';
 
 interface DebugResult {
   error_type: string;
@@ -12,13 +12,27 @@ interface DebugResult {
   confidence_score: number;
 }
 
+const PRESETS = [
+  {
+    name: 'ZeroDivisionError',
+    code: 'def divide_numbers(a, b):\n    return a / b\n\nresult = divide_numbers(10, 0)',
+    trace: 'ZeroDivisionError: division by zero\n  File "main.py", line 2, in divide_numbers'
+  },
+  {
+    name: 'IndexError',
+    code: 'def get_last_element(arr):\n    return arr[len(arr)]\n\nval = get_last_element([10, 20, 30])',
+    trace: 'IndexError: list index out of range\n  File "main.py", line 2, in get_last_element'
+  },
+  {
+    name: 'KeyError',
+    code: 'def get_user_age(user_dict):\n    return user_dict["age"]\n\nu = {"name": "Alex"}\nprint(get_user_age(u))',
+    trace: 'KeyError: \'age\'\n  File "main.py", line 2, in get_user_age'
+  }
+];
+
 export const App: React.FC = () => {
-  const [code, setCode] = useState<string>(
-    'def divide_numbers(a, b):\n    return a / b\n\nprint(divide_numbers(10, 0))'
-  );
-  const [trace, setTrace] = useState<string>(
-    'ZeroDivisionError: division by zero\n  File "main.py", line 2, in divide_numbers'
-  );
+  const [code, setCode] = useState<string>(PRESETS[0].code);
+  const [trace, setTrace] = useState<string>(PRESETS[0].trace);
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<DebugResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -40,66 +54,157 @@ export const App: React.FC = () => {
 
       if (!response.ok) {
         const errorJson = await response.json().catch(() => null);
-        throw new Error(errorJson?.detail || `API returned status ${response.status}`);
+        throw new Error(errorJson?.detail || `API status code: ${response.status}`);
       }
 
       const data: DebugResult = await response.json();
       setResult(data);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to communicate with TracePilot API.');
+      setErrorMsg(err.message || 'Connection failed to local backend service.');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0d1117', color: '#c9d1d9', display: 'flex', flexDirection: 'column' }}>
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#010409',
+      color: '#e6edf3',
+      display: 'flex',
+      flexDirection: 'column',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif'
+    }}>
       <Header modelStatus="MiniGPT-Debugger (4.9M)" dbStatus={true} />
 
-      <main style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', padding: '24px', flex: 1 }}>
-        {/* Left Panel: Code & Error Inputs */}
+      {/* Preset Selector */}
+      <div style={{
+        padding: '10px 28px',
+        backgroundColor: '#0d1117',
+        borderBottom: '1px solid #21262d',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px'
+      }}>
+        <span style={{ fontSize: '0.78rem', color: '#8b949e', fontWeight: 600 }}>LOAD TEST SAMPLE:</span>
+        {PRESETS.map((preset) => (
+          <button
+            key={preset.name}
+            onClick={() => {
+              setCode(preset.code);
+              setTrace(preset.trace);
+              setResult(null);
+              setErrorMsg(null);
+            }}
+            style={{
+              backgroundColor: '#161b22',
+              border: '1px solid #30363d',
+              borderRadius: '6px',
+              color: '#58a6ff',
+              padding: '4px 10px',
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+              fontWeight: 500
+            }}
+          >
+            {preset.name}
+          </button>
+        ))}
+      </div>
+
+      <main style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(420px, 1fr) minmax(460px, 1.2fr)',
+        gap: '20px',
+        padding: '20px 28px',
+        flex: 1,
+        boxSizing: 'border-box'
+      }}>
+        {/* Left Column: Code and Error Trace Input */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', fontWeight: 600, color: '#8b949e' }}>
-              SOURCE CODE
-            </label>
+          {/* Source Code Container */}
+          <div style={{
+            backgroundColor: '#0d1117',
+            border: '1px solid #30363d',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 14px',
+              backgroundColor: '#161b22',
+              borderBottom: '1px solid #30363d',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#c9d1d9'
+            }}>
+              <Code2 size={15} color="#58a6ff" />
+              PYTHON SOURCE CODE
+            </div>
             <textarea
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              spellCheck={false}
               style={{
                 width: '100%',
                 height: '240px',
-                backgroundColor: '#161b22',
-                border: '1px solid #30363d',
-                borderRadius: '6px',
-                padding: '12px',
-                color: '#f0f6fc',
-                fontFamily: 'Consolas, Monaco, monospace',
-                fontSize: '0.9rem',
+                backgroundColor: '#0d1117',
+                border: 'none',
+                padding: '14px',
+                color: '#e6edf3',
+                fontFamily: '"JetBrains Mono", Consolas, monospace',
+                fontSize: '0.88rem',
+                lineHeight: '1.45',
                 resize: 'none',
+                outline: 'none',
                 boxSizing: 'border-box'
               }}
             />
           </div>
 
-          <div>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', fontWeight: 600, color: '#8b949e' }}>
-              ERROR MESSAGE / STACK TRACE
-            </label>
+          {/* Traceback Container */}
+          <div style={{
+            backgroundColor: '#0d1117',
+            border: '1px solid #30363d',
+            borderRadius: '8px',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 14px',
+              backgroundColor: '#161b22',
+              borderBottom: '1px solid #30363d',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#c9d1d9'
+            }}>
+              <AlertCircle size={15} color="#f85149" />
+              STACK TRACE / DIAGNOSTIC
+            </div>
             <textarea
               value={trace}
               onChange={(e) => setTrace(e.target.value)}
+              spellCheck={false}
               style={{
                 width: '100%',
                 height: '110px',
-                backgroundColor: '#161b22',
-                border: '1px solid #30363d',
-                borderRadius: '6px',
-                padding: '12px',
-                color: '#f85149',
-                fontFamily: 'Consolas, Monaco, monospace',
-                fontSize: '0.85rem',
+                backgroundColor: '#0d1117',
+                border: 'none',
+                padding: '12px 14px',
+                color: '#ff7b72',
+                fontFamily: '"JetBrains Mono", Consolas, monospace',
+                fontSize: '0.84rem',
+                lineHeight: '1.4',
                 resize: 'none',
+                outline: 'none',
                 boxSizing: 'border-box'
               }}
             />
@@ -112,92 +217,155 @@ export const App: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '8px',
-              padding: '12px 20px',
+              gap: '10px',
+              padding: '12px',
               backgroundColor: loading ? '#21262d' : '#238636',
               color: '#ffffff',
               border: 'none',
               borderRadius: '6px',
               fontWeight: 600,
-              fontSize: '0.95rem',
-              cursor: loading ? 'not-allowed' : 'pointer'
+              fontSize: '0.92rem',
+              cursor: loading ? 'not-allowed' : 'pointer',
+              transition: 'background-color 0.2s'
             }}
           >
             {loading ? <RefreshCw className="animate-spin" size={18} /> : <Play size={18} />}
-            {loading ? 'Analyzing Code & Running Transformer...' : 'Analyze & Repair Bug'}
+            {loading ? 'Synthesizing Patch via MiniGPT...' : 'Analyze & Synthesize Patch'}
           </button>
 
           {errorMsg && (
             <div style={{
               padding: '12px',
-              backgroundColor: 'rgba(248, 81, 73, 0.1)',
+              backgroundColor: 'rgba(248, 81, 73, 0.12)',
               border: '1px solid #f85149',
               borderRadius: '6px',
-              color: '#f85149',
-              fontSize: '0.85rem',
-              wordBreak: 'break-word'
+              color: '#ff7b72',
+              fontSize: '0.84rem'
             }}>
-              <strong>Error:</strong> {errorMsg}
+              <strong>Server Notice:</strong> {errorMsg}
             </div>
           )}
         </section>
 
-        {/* Right Panel: Diagnosis & Diff */}
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        {/* Right Column: Diagnosis & Verified Patch */}
+        <section style={{
+          backgroundColor: '#0d1117',
+          border: '1px solid #30363d',
+          borderRadius: '8px',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
           <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 16px',
             backgroundColor: '#161b22',
-            border: '1px solid #30363d',
-            borderRadius: '6px',
-            padding: '16px',
-            minHeight: '400px'
+            borderBottom: '1px solid #30363d'
           }}>
-            <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: '0 0 16px 0', color: '#f0f6fc' }}>
-              DIAGNOSIS & VERIFIED PATCH
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.84rem', fontWeight: 600 }}>
+              <Wrench size={16} color="#7ee787" />
+              INSPECTION & PATCH VERIFICATION
+            </div>
+            {result && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                fontSize: '0.75rem',
+                color: result.syntax_valid ? '#7ee787' : '#f85149',
+                backgroundColor: result.syntax_valid ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                padding: '3px 10px',
+                borderRadius: '12px'
+              }}>
+                {result.syntax_valid ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                {result.syntax_valid ? 'AST Validated' : 'Syntax Invalid'}
+              </div>
+            )}
+          </div>
 
+          <div style={{ padding: '18px', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
             {!result && !loading && (
-              <div style={{ color: '#8b949e', fontSize: '0.9rem', textAlign: 'center', marginTop: '120px' }}>
-                Run analysis to inspect bug location, root cause, and synthesized patch.
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flex: 1,
+                color: '#6e7681',
+                fontSize: '0.88rem',
+                textAlign: 'center',
+                gap: '8px'
+              }}>
+                <Code2 size={36} color="#30363d" />
+                <span>Submit source code to inspect AST scope and generate repairs.</span>
               </div>
             )}
 
             {result && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                  <span style={{ backgroundColor: '#21262d', padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', color: '#58a6ff' }}>
-                    Type: <strong>{result.error_type}</strong>
-                  </span>
-                  <span style={{ backgroundColor: '#21262d', padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', color: '#8b949e' }}>
-                    Location: <strong>{result.error_location}</strong>
-                  </span>
-                  <span style={{
-                    backgroundColor: result.syntax_valid ? 'rgba(46, 160, 67, 0.2)' : 'rgba(248, 81, 73, 0.2)',
-                    color: result.syntax_valid ? '#7ee787' : '#f85149',
+              <>
+                {/* Status Badges */}
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <div style={{
+                    backgroundColor: '#161b22',
+                    border: '1px solid #30363d',
                     padding: '4px 10px',
-                    borderRadius: '20px',
-                    fontSize: '0.8rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
+                    borderRadius: '6px',
+                    fontSize: '0.78rem'
                   }}>
-                    {result.syntax_valid ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-                    {result.syntax_valid ? 'Syntax Validated' : 'Syntax Invalid'}
-                  </span>
-                  <span style={{ backgroundColor: '#21262d', padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', color: '#8b949e' }}>
-                    Confidence: <strong>{(result.confidence_score * 100).toFixed(0)}%</strong>
-                  </span>
+                    <span style={{ color: '#8b949e' }}>Exception: </span>
+                    <strong style={{ color: '#58a6ff' }}>{result.error_type}</strong>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: '#161b22',
+                    border: '1px solid #30363d',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    fontSize: '0.78rem'
+                  }}>
+                    <span style={{ color: '#8b949e' }}>Scope: </span>
+                    <strong style={{ color: '#c9d1d9' }}>{result.error_location}</strong>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: '#161b22',
+                    border: '1px solid #30363d',
+                    padding: '4px 10px',
+                    borderRadius: '6px',
+                    fontSize: '0.78rem'
+                  }}>
+                    <span style={{ color: '#8b949e' }}>Confidence: </span>
+                    <strong style={{ color: '#7ee787' }}>{(result.confidence_score * 100).toFixed(0)}%</strong>
+                  </div>
                 </div>
 
+                {/* Root Cause Box */}
                 <div>
-                  <div style={{ fontSize: '0.8rem', color: '#8b949e', marginBottom: '4px' }}>ROOT CAUSE</div>
-                  <div style={{ color: '#c9d1d9', fontSize: '0.9rem' }}>{result.root_cause}</div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
+                    DIAGNOSED ROOT CAUSE
+                  </div>
+                  <div style={{
+                    backgroundColor: '#161b22',
+                    border: '1px solid #21262d',
+                    borderRadius: '6px',
+                    padding: '10px 14px',
+                    fontSize: '0.84rem',
+                    color: '#c9d1d9'
+                  }}>
+                    {result.root_cause}
+                  </div>
                 </div>
 
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: '#8b949e', marginBottom: '6px' }}>PATCH DIFF</div>
+                {/* Diff Viewer */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
+                    PROPOSED PATCH DIFF
+                  </div>
                   <DiffViewer originalCode={code} repairedCode={result.suggested_fix} />
                 </div>
-              </div>
+              </>
             )}
           </div>
         </section>
