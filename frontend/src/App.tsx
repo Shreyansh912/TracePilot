@@ -39,7 +39,8 @@ export const App: React.FC = () => {
       });
 
       if (!response.ok) {
-        throw new Error(`API returned status ${response.status}`);
+        const errorJson = await response.json().catch(() => null);
+        throw new Error(errorJson?.detail || `API returned status ${response.status}`);
       }
 
       const data: DebugResult = await response.json();
@@ -56,7 +57,7 @@ export const App: React.FC = () => {
       <Header modelStatus="MiniGPT-Debugger (4.9M)" dbStatus={true} />
 
       <main style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', padding: '24px', flex: 1 }}>
-        {/* Left Panel: Inputs */}
+        {/* Left Panel: Code & Error Inputs */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div>
             <label style={{ display: 'block', marginBottom: '6px', fontSize: '0.85rem', fontWeight: 600, color: '#8b949e' }}>
@@ -73,7 +74,7 @@ export const App: React.FC = () => {
                 borderRadius: '6px',
                 padding: '12px',
                 color: '#f0f6fc',
-                fontFamily: 'Consolas, monospace',
+                fontFamily: 'Consolas, Monaco, monospace',
                 fontSize: '0.9rem',
                 resize: 'none',
                 boxSizing: 'border-box'
@@ -96,7 +97,7 @@ export const App: React.FC = () => {
                 borderRadius: '6px',
                 padding: '12px',
                 color: '#f85149',
-                fontFamily: 'Consolas, monospace',
+                fontFamily: 'Consolas, Monaco, monospace',
                 fontSize: '0.85rem',
                 resize: 'none',
                 boxSizing: 'border-box'
@@ -127,8 +128,16 @@ export const App: React.FC = () => {
           </button>
 
           {errorMsg && (
-            <div style={{ padding: '12px', backgroundColor: 'rgba(248, 81, 73, 0.1)', border: '1px solid #f85149', borderRadius: '6px', color: '#f85149', fontSize: '0.85rem' }}>
-              {errorMsg}
+            <div style={{
+              padding: '12px',
+              backgroundColor: 'rgba(248, 81, 73, 0.1)',
+              border: '1px solid #f85149',
+              borderRadius: '6px',
+              color: '#f85149',
+              fontSize: '0.85rem',
+              wordBreak: 'break-word'
+            }}>
+              <strong>Error:</strong> {errorMsg}
             </div>
           )}
         </section>
@@ -173,6 +182,9 @@ export const App: React.FC = () => {
                   }}>
                     {result.syntax_valid ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
                     {result.syntax_valid ? 'Syntax Validated' : 'Syntax Invalid'}
+                  </span>
+                  <span style={{ backgroundColor: '#21262d', padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', color: '#8b949e' }}>
+                    Confidence: <strong>{(result.confidence_score * 100).toFixed(0)}%</strong>
                   </span>
                 </div>
 
