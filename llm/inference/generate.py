@@ -1,7 +1,7 @@
 """
 llm/inference/generate.py
 Inference engine with repetition penalty, temperature scaling, top-k sampling,
-consecutive n-gram early stopping, and delimiter boundaries.
+consecutive n-gram early stopping, minimum token thresholding, and delimiter boundaries.
 """
 from typing import List, Optional
 import torch
@@ -35,22 +35,27 @@ class DebugGenerator:
     def generate(
         self,
         prompt: str,
-        max_new_tokens: int = 80,
+        max_new_tokens: int = 90,
+        min_new_tokens: int = 12,
         temperature: float = 0.3,
         top_k: int = 5,
-        repetition_penalty: float = 1.45
+        repetition_penalty: float = 1.35
     ) -> str:
         tokens = self.tokenizer.encode(prompt)
         x = torch.tensor([tokens], dtype=torch.long, device=self.device)
 
         generated_tokens = []
 
-        for _ in range(max_new_tokens):
+        for step in range(max_new_tokens):
             x_cond = x if x.size(1) <= self.model.block_size else x[:, -self.model.block_size:]
             logits, _ = self.model(x_cond)
             logits = logits[:, -1, :] / max(temperature, 1e-5)
 
-            # Apply repetition penalty across all tokens generated in current sequence
+            # Prevent early termination before minimum token count
+            if step < min_new_tokens and self.eos_id is not None:
+                logits[0, self.eos_id] = float("-inf")
+
+            # Apply repetition penalty
             if repetition_penalty != 1.0:
                 for token_id in set(x[0].tolist()):
                     if logits[0, token_id] > 0:
@@ -67,14 +72,13 @@ class DebugGenerator:
             next_token = torch.multinomial(probs, num_samples=1)
             next_id = next_token.item()
 
-            # Stop conditions: EOS token reached
             if next_id == self.eos_id:
                 break
 
-            # Consecutive Repetition Guard: Stop if the same token repeats 3 times in a row
             generated_tokens.append(next_id)
+
+            # 3-gram repetition guard
             if len(generated_tokens) >= 3 and generated_tokens[-1] == generated_tokens[-2] == generated_tokens[-3]:
-                # Discard repeating tail and break immediately
                 generated_tokens = generated_tokens[:-2]
                 break
 

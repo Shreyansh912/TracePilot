@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { DiffViewer } from './components/DiffViewer';
-import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench } from 'lucide-react';
+import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench, TerminalSquare } from 'lucide-react';
 
 interface DebugResult {
   error_type: string;
@@ -19,18 +19,18 @@ interface DebugResult {
 const PRESETS = [
   {
     name: 'ZeroDivisionError',
-    code: 'def divide_numbers(a, b):\n    return a / b\n\nresult = divide_numbers(10, 0)',
-    trace: 'ZeroDivisionError: division by zero\n  File "main.py", line 2, in divide_numbers'
+    code: 'def calculate_ratio(total, count):\n    return total / count\n\nprint(calculate_ratio(10, 0))',
+    trace: 'ZeroDivisionError: division by zero\n  File "main.py", line 2, in calculate_ratio'
   },
   {
     name: 'IndexError',
-    code: 'def get_last_element(arr):\n    return arr[len(arr)]\n\nval = get_last_element([10, 20, 30])',
+    code: 'def get_last_element(items):\n    return items[len(items) + 5]\n\nval = get_last_element([10, 20, 30])',
     trace: 'IndexError: list index out of range\n  File "main.py", line 2, in get_last_element'
   },
   {
     name: 'KeyError',
-    code: 'def get_user_age(user_dict):\n    return user_dict["age"]\n\nu = {"name": "Alex"}\nprint(get_user_age(u))',
-    trace: 'KeyError: \'age\'\n  File "main.py", line 2, in get_user_age'
+    code: 'def get_config_value(settings, key):\n    return settings["__non_existent_key__"]\n\ncfg = {"name": "app"}\nprint(get_config_value(cfg, "debug"))',
+    trace: 'KeyError: \'__non_existent_key__\'\n  File "main.py", line 2, in get_config_value'
   }
 ];
 
@@ -381,12 +381,47 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Diff Viewer */}
-                <div style={{ flex: 1 }}>
+                <div>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
                     PROPOSED PATCH DIFF
                   </div>
                   <DiffViewer originalCode={code} repairedCode={result.suggested_fix} />
                 </div>
+
+                {/* Subprocess Sandbox Output Terminal */}
+                {result.sandbox_executed && (
+                  <div>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#8b949e',
+                      marginBottom: '6px'
+                    }}>
+                      <TerminalSquare size={14} color="#8b949e" />
+                      SANDBOX EXECUTION LOGS
+                    </div>
+                    <div style={{
+                      backgroundColor: '#0a0d12',
+                      border: '1px solid #21262d',
+                      borderRadius: '6px',
+                      padding: '10px 14px',
+                      fontFamily: '"JetBrains Mono", Consolas, monospace',
+                      fontSize: '0.8rem',
+                      lineHeight: '1.4',
+                      color: result.sandbox_passed ? '#7ee787' : '#ff7b72',
+                      maxHeight: '120px',
+                      overflowY: 'auto',
+                      whiteSpace: 'pre-wrap'
+                    }}>
+                      {result.sandbox_passed 
+                        ? (result.sandbox_stdout || 'Process finished with exit code 0 (Execution Verified).')
+                        : (result.sandbox_stderr || 'Process execution failed with non-zero exit code.')}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
