@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
 import { Header } from './components/Header';
 import { DiffViewer } from './components/DiffViewer';
-import { Play, CheckCircle, AlertTriangle, RefreshCw, Code2, AlertCircle, Wrench, TerminalSquare, RotateCcw } from 'lucide-react';
+import { 
+  Play, CheckCircle, AlertTriangle, RefreshCw, Code2, 
+  AlertCircle, Wrench, TerminalSquare, RotateCcw, History, X 
+} from 'lucide-react';
 
 interface IterationAttempt {
   attempt_number: number;
@@ -24,6 +27,17 @@ interface DebugResult {
   iterations_used?: number;
   self_corrected?: boolean;
   attempts?: IterationAttempt[];
+}
+
+interface HistoryItem {
+  _id: string;
+  timestamp?: string;
+  code: string;
+  stack_trace?: string;
+  error_type?: string;
+  suggested_fix?: string;
+  sandbox_passed?: boolean;
+  confidence_score?: number;
 }
 
 const PRESETS = [
@@ -50,6 +64,53 @@ export const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [result, setResult] = useState<DebugResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // History Drawer State
+  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
+  const [historyList, setHistoryList] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch('http://127.0.0.1:8000/debug/history');
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryList(data.history || []);
+      }
+    } catch {
+      // Fallback if unreachable
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const toggleHistory = () => {
+    if (!historyOpen) {
+      fetchHistory();
+    }
+    setHistoryOpen(!historyOpen);
+  };
+
+  const handleSelectHistory = (item: HistoryItem) => {
+    if (item.code) setCode(item.code);
+    if (item.stack_trace) setTrace(item.stack_trace);
+    if (item.suggested_fix) {
+      setResult({
+        error_type: item.error_type || 'Resolved',
+        error_location: 'Stored Session',
+        root_cause: item.error_type || 'Historical execution record',
+        suggested_fix: item.suggested_fix,
+        syntax_valid: true,
+        confidence_score: item.confidence_score || 0.90,
+        sandbox_executed: true,
+        sandbox_passed: item.sandbox_passed ?? true,
+        sandbox_stdout: 'Loaded from local MongoDB record.',
+        sandbox_stderr: ''
+      });
+    }
+    setHistoryOpen(false);
+  };
 
   const handleAnalyze = async () => {
     setLoading(true);
@@ -87,45 +148,157 @@ export const App: React.FC = () => {
       color: '#e6edf3',
       display: 'flex',
       flexDirection: 'column',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif'
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+      position: 'relative',
+      overflowX: 'hidden'
     }}>
       <Header modelStatus="MiniGPT-Debugger (4.9M)" dbStatus={true} />
 
-      {/* Preset Selector */}
+      {/* Preset & History Navigation Bar */}
       <div style={{
         padding: '10px 28px',
         backgroundColor: '#0d1117',
         borderBottom: '1px solid #21262d',
         display: 'flex',
         alignItems: 'center',
-        gap: '12px'
+        justifyContent: 'space-between'
       }}>
-        <span style={{ fontSize: '0.78rem', color: '#8b949e', fontWeight: 600 }}>LOAD TEST SAMPLE:</span>
-        {PRESETS.map((preset) => (
-          <button
-            key={preset.name}
-            onClick={() => {
-              setCode(preset.code);
-              setTrace(preset.trace);
-              setResult(null);
-              setErrorMsg(null);
-            }}
-            style={{
-              backgroundColor: '#161b22',
-              border: '1px solid #30363d',
-              borderRadius: '6px',
-              color: '#58a6ff',
-              padding: '4px 10px',
-              fontSize: '0.78rem',
-              cursor: 'pointer',
-              fontWeight: 500
-            }}
-          >
-            {preset.name}
-          </button>
-        ))}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '0.78rem', color: '#8b949e', fontWeight: 600 }}>LOAD TEST SAMPLE:</span>
+          {PRESETS.map((preset) => (
+            <button
+              key={preset.name}
+              onClick={() => {
+                setCode(preset.code);
+                setTrace(preset.trace);
+                setResult(null);
+                setErrorMsg(null);
+              }}
+              style={{
+                backgroundColor: '#161b22',
+                border: '1px solid #30363d',
+                borderRadius: '6px',
+                color: '#58a6ff',
+                padding: '4px 10px',
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                fontWeight: 500
+              }}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+
+        <button
+          onClick={toggleHistory}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            backgroundColor: '#161b22',
+            border: '1px solid #30363d',
+            borderRadius: '6px',
+            color: '#c9d1d9',
+            padding: '4px 12px',
+            fontSize: '0.78rem',
+            cursor: 'pointer',
+            fontWeight: 500
+          }}
+        >
+          <History size={14} color="#58a6ff" />
+          <span>Session History</span>
+        </button>
       </div>
 
+      {/* Slide-out History Drawer */}
+      {historyOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          width: '380px',
+          height: '100vh',
+          backgroundColor: '#0d1117',
+          borderLeft: '1px solid #30363d',
+          zIndex: 100,
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.6)'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '14px 18px',
+            borderBottom: '1px solid #21262d',
+            backgroundColor: '#161b22'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', fontWeight: 600 }}>
+              <History size={16} color="#58a6ff" />
+              <span>MongoDB Session History</span>
+            </div>
+            <button
+              onClick={() => setHistoryOpen(false)}
+              style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {historyLoading && <div style={{ color: '#8b949e', fontSize: '0.82rem' }}>Fetching records...</div>}
+            {!historyLoading && historyList.length === 0 && (
+              <div style={{ color: '#8b949e', fontSize: '0.82rem', textAlign: 'center', marginTop: '20px' }}>
+                No stored sessions found in database.
+              </div>
+            )}
+            {historyList.map((item) => (
+              <div
+                key={item._id}
+                onClick={() => handleSelectHistory(item)}
+                style={{
+                  backgroundColor: '#161b22',
+                  border: '1px solid #30363d',
+                  borderRadius: '6px',
+                  padding: '10px 12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px'
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <strong style={{ color: '#58a6ff', fontSize: '0.82rem' }}>
+                    {item.error_type || 'Debug Session'}
+                  </strong>
+                  <span style={{
+                    fontSize: '0.72rem',
+                    color: item.sandbox_passed ? '#7ee787' : '#f85149',
+                    backgroundColor: item.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                    padding: '2px 6px',
+                    borderRadius: '8px'
+                  }}>
+                    {item.sandbox_passed ? 'Passed' : 'Failed'}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: '0.75rem',
+                  color: '#8b949e',
+                  fontFamily: 'monospace',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}>
+                  {item.code.split('\n')[0]}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Main Workspace Layout */}
       <main style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(420px, 1fr) minmax(460px, 1.2fr)',
@@ -317,7 +490,6 @@ export const App: React.FC = () => {
 
             {result && (
               <>
-                {/* Badges Bar */}
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <div style={{
                     backgroundColor: '#161b22',
@@ -341,7 +513,6 @@ export const App: React.FC = () => {
                     <strong style={{ color: '#c9d1d9' }}>{result.error_location}</strong>
                   </div>
 
-                  {/* Sandbox Telemetry Badge */}
                   {result.sandbox_executed && (
                     <div style={{
                       backgroundColor: result.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
@@ -359,7 +530,6 @@ export const App: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Self-Correction Loop Badge */}
                   {result.iterations_used && result.iterations_used > 1 && (
                     <div style={{
                       backgroundColor: 'rgba(187, 128, 9, 0.15)',
@@ -389,7 +559,6 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Root Cause Card */}
                 <div>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
                     DIAGNOSED ROOT CAUSE
@@ -406,7 +575,6 @@ export const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Diff Viewer */}
                 <div>
                   <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
                     PROPOSED PATCH DIFF
@@ -414,7 +582,6 @@ export const App: React.FC = () => {
                   <DiffViewer originalCode={code} repairedCode={result.suggested_fix} />
                 </div>
 
-                {/* Sandbox Output Logs */}
                 {result.sandbox_executed && (
                   <div>
                     <div style={{
