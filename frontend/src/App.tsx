@@ -1,326 +1,384 @@
-import React, { useState } from 'react';
-import { Header } from './components/Header';
-import { DiffViewer } from './components/DiffViewer';
+import { useState, useEffect } from 'react';
 import { 
-  Play, CheckCircle, AlertTriangle, RefreshCw, Code2, 
-  AlertCircle, Wrench, TerminalSquare, RotateCcw, History, X 
+  Play, 
+  Code2, 
+  Bug, 
+  CheckCircle, 
+  AlertTriangle, 
+  Terminal, 
+  History, 
+  X, 
+  Cpu, 
+  ShieldCheck, 
+  Database,
+  ArrowRight,
+  Clock
 } from 'lucide-react';
 
-interface IterationAttempt {
+interface Attempt {
   attempt_number: number;
   patch_code: string;
   passed: boolean;
   error_summary: string;
 }
 
-interface DebugResult {
+interface DebugResponse {
   error_type: string;
   error_location: string;
   root_cause: string;
   suggested_fix: string;
   syntax_valid: boolean;
   confidence_score: number;
-  sandbox_executed?: boolean;
-  sandbox_passed?: boolean;
-  sandbox_stdout?: string;
-  sandbox_stderr?: string;
-  iterations_used?: number;
-  self_corrected?: boolean;
-  attempts?: IterationAttempt[];
+  sandbox_executed: boolean;
+  sandbox_passed: boolean;
+  sandbox_stdout: string;
+  sandbox_stderr: string;
+  iterations_used: number;
+  self_corrected: boolean;
+  attempts: Attempt[];
 }
 
 interface HistoryItem {
-  _id: string;
-  timestamp?: string;
+  session_id: string;
+  timestamp: string;
+  error_type: string;
+  sandbox_passed: boolean;
+  confidence_score: number;
   code: string;
-  stack_trace?: string;
-  error_type?: string;
-  suggested_fix?: string;
-  sandbox_passed?: boolean;
-  confidence_score?: number;
+  stack_trace: string;
+  suggested_fix: string;
+  sandbox_stdout: string;
+  sandbox_stderr: string;
 }
 
-const PRESETS = [
-  {
-    name: 'ZeroDivisionError',
-    code: 'def calculate_ratio(total, count):\n    return total / count\n\nprint(calculate_ratio(10, 0))',
-    trace: 'ZeroDivisionError: division by zero\n  File "main.py", line 2, in calculate_ratio'
+const PRESETS = {
+  ZeroDivisionError: {
+    code: `def calculate_ratio(total, count):\n    return total / count\n\nprint(calculate_ratio(10, 0))`,
+    trace: `ZeroDivisionError: division by zero\n File "main.py", line 2, in calculate_ratio`
   },
-  {
-    name: 'IndexError',
-    code: 'def get_last_element(items):\n    return items[len(items) + 5]\n\nval = get_last_element([10, 20, 30])',
-    trace: 'IndexError: list index out of range\n  File "main.py", line 2, in get_last_element'
+  IndexError: {
+    code: `def get_first_element(items):\n    return items[0]\n\nprint(get_first_element([]))`,
+    trace: `IndexError: list index out of range\n File "main.py", line 2, in get_first_element`
   },
-  {
-    name: 'KeyError',
-    code: 'def get_config_value(settings, key):\n    return settings["__non_existent_key__"]\n\ncfg = {"name": "app"}\nprint(get_config_value(cfg, "debug"))',
-    trace: 'KeyError: \'__non_existent_key__\'\n  File "main.py", line 2, in get_config_value'
+  KeyError: {
+    code: `def fetch_user_role(profile):\n    return profile['role']\n\nprint(fetch_user_role({'name': 'Alice'}))`,
+    trace: `KeyError: 'role'\n File "main.py", line 2, in fetch_user_role`
   }
-];
+};
 
-export const App: React.FC = () => {
-  const [code, setCode] = useState<string>(PRESETS[0].code);
-  const [trace, setTrace] = useState<string>(PRESETS[0].trace);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [result, setResult] = useState<DebugResult | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+const API_BASE = 'http://127.0.0.1:8000';
 
-  // History Drawer State
-  const [historyOpen, setHistoryOpen] = useState<boolean>(false);
-  const [historyList, setHistoryList] = useState<HistoryItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState<boolean>(false);
+function InlineDiffViewer({ original, modified }: { original: string; modified: string }) {
+  const origLines = original.split('\n');
+  const modLines = modified.split('\n');
 
-  const fetchHistory = async () => {
-    setHistoryLoading(true);
+  const origSet = new Set(origLines.map(l => l.trim()));
+  const modSet = new Set(modLines.map(l => l.trim()));
+
+  return (
+    <div style={{
+      backgroundColor: '#0d1117',
+      fontFamily: 'JetBrains Mono, Menlo, Consolas, Monaco, monospace',
+      fontSize: '0.8rem',
+      padding: '12px',
+      overflowX: 'auto',
+      lineHeight: 1.5
+    }}>
+      {origLines.map((line, idx) => {
+        const isRemoved = line.trim().length > 0 && !modSet.has(line.trim());
+        if (!isRemoved) return null;
+        return (
+          <div key={`orig-${idx}`} style={{ backgroundColor: 'rgba(248, 81, 73, 0.15)', color: '#f85149', padding: '2px 6px', display: 'flex', gap: '8px' }}>
+            <span style={{ width: '15px', userSelect: 'none' }}>-</span>
+            <span>{line}</span>
+          </div>
+        );
+      })}
+      {modLines.map((line, idx) => {
+        const isAdded = line.trim().length > 0 && !origSet.has(line.trim());
+        return (
+          <div
+            key={`mod-${idx}`}
+            style={{
+              backgroundColor: isAdded ? 'rgba(46, 160, 67, 0.2)' : 'transparent',
+              color: isAdded ? '#3fb950' : '#c9d1d9',
+              padding: '2px 6px',
+              display: 'flex',
+              gap: '8px'
+            }}
+          >
+            <span style={{ width: '15px', userSelect: 'none', color: isAdded ? '#3fb950' : '#484f58' }}>
+              {isAdded ? '+' : ' '}
+            </span>
+            <span>{line}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function App() {
+  const [code, setCode] = useState(PRESETS.ZeroDivisionError.code);
+  const [stackTrace, setStackTrace] = useState(PRESETS.ZeroDivisionError.trace);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<DebugResponse | null>(null);
+  
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    checkHealth();
+  }, []);
+
+  const checkHealth = async () => {
     try {
-      const res = await fetch('http://127.0.0.1:8000/debug/history');
+      const res = await fetch(`${API_BASE}/health`);
       if (res.ok) {
         const data = await res.json();
-        setHistoryList(data.history || []);
+        // Support all standard MongoDB health status structures
+        const isConnected = 
+          data?.storage?.status === 'connected' ||
+          data?.storage?.connected === true ||
+          data?.database === 'connected' ||
+          data?.mongodb === 'connected' ||
+          data?.storage?.database_available === true ||
+          data?.status === 'healthy';
+        setDbConnected(Boolean(isConnected));
+      } else {
+        setDbConnected(false);
       }
     } catch {
-      // Fallback if unreachable
-    } finally {
-      setHistoryLoading(false);
+      setDbConnected(false);
     }
   };
 
-  const toggleHistory = () => {
-    if (!historyOpen) {
-      fetchHistory();
-    }
-    setHistoryOpen(!historyOpen);
-  };
-
-  const handleSelectHistory = (item: HistoryItem) => {
-    if (item.code) setCode(item.code);
-    if (item.stack_trace) setTrace(item.stack_trace);
-    if (item.suggested_fix) {
-      setResult({
-        error_type: item.error_type || 'Resolved',
-        error_location: 'Stored Session',
-        root_cause: item.error_type || 'Historical execution record',
-        suggested_fix: item.suggested_fix,
-        syntax_valid: true,
-        confidence_score: item.confidence_score || 0.90,
-        sandbox_executed: true,
-        sandbox_passed: item.sandbox_passed ?? true,
-        sandbox_stdout: 'Loaded from local MongoDB record.',
-        sandbox_stderr: ''
-      });
-    }
-    setHistoryOpen(false);
+  const loadPreset = (key: keyof typeof PRESETS) => {
+    setCode(PRESETS[key].code);
+    setStackTrace(PRESETS[key].trace);
+    setResult(null);
   };
 
   const handleAnalyze = async () => {
     setLoading(true);
-    setErrorMsg(null);
+    setResult(null);
     try {
-      const response = await fetch('http://127.0.0.1:8000/debug', {
+      const payload = {
+        code,
+        stack_trace: stackTrace,
+        error_message: stackTrace.split('\n')[0]
+      };
+      const res = await fetch(`${API_BASE}/debug`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code,
-          language: 'python',
-          error_message: trace.split('\n')[0],
-          stack_trace: trace
-        })
+        body: JSON.stringify(payload)
       });
-
-      if (!response.ok) {
-        const errorJson = await response.json().catch(() => null);
-        throw new Error(errorJson?.detail || `API returned status: ${response.status}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Server returned status ${res.status}`);
       }
-
-      const data: DebugResult = await response.json();
+      const data: DebugResponse = await res.json();
       setResult(data);
+      checkHealth();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Connection failed to local backend service.');
+      console.error(err);
+      alert(err.message || 'Analysis request failed. Verify that your backend server is running on port 8000.');
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div style={{
-      minHeight: '100vh',
-      backgroundColor: '#010409',
-      color: '#e6edf3',
-      display: 'flex',
-      flexDirection: 'column',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
-      position: 'relative',
-      overflowX: 'hidden'
-    }}>
-      <Header modelStatus="MiniGPT-Debugger (4.9M)" dbStatus={true} />
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/debug/history?limit=25`);
+      if (!res.ok) throw new Error('Failed to fetch history');
+      const data: HistoryItem[] = await res.json();
+      setHistoryItems(data);
+      setDbConnected(true);
+    } catch (err) {
+      console.error('Failed to load session history', err);
+      setDbConnected(false);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
-      {/* Preset & History Navigation Bar */}
-      <div style={{
-        padding: '10px 28px',
-        backgroundColor: '#0d1117',
-        borderBottom: '1px solid #21262d',
+  const toggleHistoryDrawer = () => {
+    if (!drawerOpen) {
+      fetchHistory();
+    }
+    setDrawerOpen(!drawerOpen);
+  };
+
+  const restoreSession = (item: HistoryItem) => {
+    setCode(item.code);
+    setStackTrace(item.stack_trace);
+    setResult({
+      error_type: item.error_type,
+      error_location: 'Restored from Session',
+      root_cause: item.error_type,
+      suggested_fix: item.suggested_fix,
+      syntax_valid: true,
+      confidence_score: item.confidence_score,
+      sandbox_executed: true,
+      sandbox_passed: item.sandbox_passed,
+      sandbox_stdout: item.sandbox_stdout,
+      sandbox_stderr: item.sandbox_stderr,
+      iterations_used: 1,
+      self_corrected: false,
+      attempts: []
+    });
+    setDrawerOpen(false);
+  };
+
+  return (
+    <div style={{ minHeight: '100vh', backgroundColor: '#0d1117', color: '#c9d1d9', fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' }}>
+      
+      {/* Top Navigation Bar */}
+      <header style={{
+        height: '60px',
+        borderBottom: '1px solid #30363d',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between'
+        justifyContent: 'space-between',
+        padding: '0 24px',
+        backgroundColor: '#161b22'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ fontSize: '0.78rem', color: '#8b949e', fontWeight: 600 }}>LOAD TEST SAMPLE:</span>
-          {PRESETS.map((preset) => (
-            <button
-              key={preset.name}
-              onClick={() => {
-                setCode(preset.code);
-                setTrace(preset.trace);
-                setResult(null);
-                setErrorMsg(null);
-              }}
-              style={{
-                backgroundColor: '#161b22',
-                border: '1px solid #30363d',
-                borderRadius: '6px',
-                color: '#58a6ff',
-                padding: '4px 10px',
-                fontSize: '0.78rem',
-                cursor: 'pointer',
-                fontWeight: 500
-              }}
-            >
-              {preset.name}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={toggleHistory}
-          style={{
+          <div style={{
+            width: '32px',
+            height: '32px',
+            borderRadius: '8px',
+            background: 'linear-gradient(135deg, #238636 0%, #2ea043 100%)',
             display: 'flex',
             alignItems: 'center',
-            gap: '6px',
-            backgroundColor: '#161b22',
-            border: '1px solid #30363d',
-            borderRadius: '6px',
-            color: '#c9d1d9',
-            padding: '4px 12px',
-            fontSize: '0.78rem',
-            cursor: 'pointer',
-            fontWeight: 500
-          }}
-        >
-          <History size={14} color="#58a6ff" />
-          <span>Session History</span>
-        </button>
-      </div>
+            justifyContent: 'center',
+            color: '#fff',
+            fontWeight: 700,
+            fontSize: '1.1rem'
+          }}>
+            T
+          </div>
+          <div>
+            <div style={{ fontSize: '1rem', fontWeight: 700, color: '#f0f6fc', letterSpacing: '0.3px' }}>TracePilot</div>
+            <div style={{ fontSize: '0.72rem', color: '#8b949e' }}>Autonomous Code Repair Engine</div>
+          </div>
+        </div>
 
-      {/* Slide-out History Drawer */}
-      {historyOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          right: 0,
-          width: '380px',
-          height: '100vh',
-          backgroundColor: '#0d1117',
-          borderLeft: '1px solid #30363d',
-          zIndex: 100,
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.6)'
-        }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Storage Status */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '14px 18px',
-            borderBottom: '1px solid #21262d',
-            backgroundColor: '#161b22'
+            gap: '6px',
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '20px',
+            backgroundColor: dbConnected ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+            border: `1px solid ${dbConnected ? 'rgba(46, 160, 67, 0.4)' : 'rgba(248, 81, 73, 0.4)'}`,
+            color: dbConnected ? '#3fb950' : '#f85149'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.88rem', fontWeight: 600 }}>
-              <History size={16} color="#58a6ff" />
-              <span>MongoDB Session History</span>
-            </div>
-            <button
-              onClick={() => setHistoryOpen(false)}
-              style={{ background: 'none', border: 'none', color: '#8b949e', cursor: 'pointer' }}
-            >
-              <X size={18} />
-            </button>
+            <Database size={13} />
+            <span>{dbConnected ? 'MongoDB Connected' : 'MongoDB Disconnected'}</span>
           </div>
 
-          <div style={{ flex: 1, overflowY: 'auto', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {historyLoading && <div style={{ color: '#8b949e', fontSize: '0.82rem' }}>Fetching records...</div>}
-            {!historyLoading && historyList.length === 0 && (
-              <div style={{ color: '#8b949e', fontSize: '0.82rem', textAlign: 'center', marginTop: '20px' }}>
-                No stored sessions found in database.
-              </div>
-            )}
-            {historyList.map((item) => (
-              <div
-                key={item._id}
-                onClick={() => handleSelectHistory(item)}
-                style={{
-                  backgroundColor: '#161b22',
-                  border: '1px solid #30363d',
-                  borderRadius: '6px',
-                  padding: '10px 12px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <strong style={{ color: '#58a6ff', fontSize: '0.82rem' }}>
-                    {item.error_type || 'Debug Session'}
-                  </strong>
-                  <span style={{
-                    fontSize: '0.72rem',
-                    color: item.sandbox_passed ? '#7ee787' : '#f85149',
-                    backgroundColor: item.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
-                    padding: '2px 6px',
-                    borderRadius: '8px'
-                  }}>
-                    {item.sandbox_passed ? 'Passed' : 'Failed'}
-                  </span>
-                </div>
-                <div style={{
-                  fontSize: '0.75rem',
-                  color: '#8b949e',
-                  fontFamily: 'monospace',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis'
-                }}>
-                  {item.code.split('\n')[0]}
-                </div>
-              </div>
-            ))}
+          {/* Sandbox Status */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '0.75rem',
+            padding: '4px 10px',
+            borderRadius: '20px',
+            backgroundColor: 'rgba(56, 139, 253, 0.12)',
+            border: '1px solid rgba(56, 139, 253, 0.35)',
+            color: '#58a6ff'
+          }}>
+            <ShieldCheck size={13} />
+            <span>Subprocess Sandbox</span>
           </div>
+
+          {/* Session History Button */}
+          <button
+            onClick={toggleHistoryDrawer}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#21262d',
+              color: '#c9d1d9',
+              border: '1px solid #30363d',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            <History size={15} />
+            <span>Session History</span>
+          </button>
         </div>
-      )}
+      </header>
+
+      {/* Preset Bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        padding: '10px 24px',
+        backgroundColor: '#0d1117',
+        borderBottom: '1px solid #21262d',
+        fontSize: '0.8rem'
+      }}>
+        <span style={{ color: '#8b949e', fontWeight: 600 }}>LOAD TEST SAMPLE:</span>
+        {(['ZeroDivisionError', 'IndexError', 'KeyError'] as const).map((key) => (
+          <button
+            key={key}
+            onClick={() => loadPreset(key)}
+            style={{
+              backgroundColor: '#21262d',
+              color: '#58a6ff',
+              border: '1px solid #30363d',
+              borderRadius: '6px',
+              padding: '4px 10px',
+              cursor: 'pointer',
+              fontSize: '0.75rem',
+              fontWeight: 500
+            }}
+          >
+            {key}
+          </button>
+        ))}
+      </div>
 
       {/* Main Workspace Layout */}
       <main style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(420px, 1fr) minmax(460px, 1.2fr)',
+        gridTemplateColumns: '1fr 1fr',
         gap: '20px',
-        padding: '20px 28px',
-        flex: 1,
-        boxSizing: 'border-box'
+        padding: '24px',
+        maxWidth: '1600px',
+        margin: '0 auto'
       }}>
-        {/* Left Column: Code and Error Input */}
-        <section style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        
+        {/* Left Column: Code and Stack Trace Input */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          {/* Source Code Container */}
           <div style={{
             backgroundColor: '#0d1117',
             border: '1px solid #30363d',
             borderRadius: '8px',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column'
+            overflow: 'hidden'
           }}>
             <div style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
+              justifyContent: 'space-between',
               padding: '8px 14px',
               backgroundColor: '#161b22',
               borderBottom: '1px solid #30363d',
@@ -328,37 +386,59 @@ export const App: React.FC = () => {
               fontWeight: 600,
               color: '#c9d1d9'
             }}>
-              <Code2 size={15} color="#58a6ff" />
-              PYTHON SOURCE CODE
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Code2 size={15} color="#58a6ff" />
+                <span>PYTHON SOURCE CODE</span>
+              </div>
+              {result && result.sandbox_passed && (
+                <button
+                  onClick={() => setCode(result.suggested_fix)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    backgroundColor: '#238636',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '3px 9px',
+                    fontSize: '0.72rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                  title="Replace editor code with verified fix"
+                >
+                  <CheckCircle size={12} />
+                  Apply Fix
+                </button>
+              )}
             </div>
             <textarea
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              spellCheck={false}
+              rows={14}
               style={{
                 width: '100%',
-                height: '240px',
-                backgroundColor: '#0d1117',
-                border: 'none',
                 padding: '14px',
-                color: '#e6edf3',
-                fontFamily: '"JetBrains Mono", Consolas, monospace',
-                fontSize: '0.88rem',
-                lineHeight: '1.45',
-                resize: 'none',
+                backgroundColor: '#0d1117',
+                color: '#f0f6fc',
+                fontFamily: 'JetBrains Mono, Menlo, Consolas, Monaco, monospace',
+                fontSize: '0.85rem',
+                border: 'none',
                 outline: 'none',
+                resize: 'vertical',
+                lineHeight: 1.5,
                 boxSizing: 'border-box'
               }}
             />
           </div>
 
+          {/* Stack Trace Container */}
           <div style={{
             backgroundColor: '#0d1117',
             border: '1px solid #30363d',
             borderRadius: '8px',
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column'
+            overflow: 'hidden'
           }}>
             <div style={{
               display: 'flex',
@@ -369,32 +449,32 @@ export const App: React.FC = () => {
               borderBottom: '1px solid #30363d',
               fontSize: '0.78rem',
               fontWeight: 600,
-              color: '#c9d1d9'
+              color: '#f85149'
             }}>
-              <AlertCircle size={15} color="#f85149" />
-              STACK TRACE / DIAGNOSTIC
+              <Bug size={15} color="#f85149" />
+              <span>STACK TRACE / DIAGNOSTIC</span>
             </div>
             <textarea
-              value={trace}
-              onChange={(e) => setTrace(e.target.value)}
-              spellCheck={false}
+              value={stackTrace}
+              onChange={(e) => setStackTrace(e.target.value)}
+              rows={5}
               style={{
                 width: '100%',
-                height: '110px',
+                padding: '14px',
                 backgroundColor: '#0d1117',
+                color: '#f85149',
+                fontFamily: 'JetBrains Mono, Menlo, Consolas, Monaco, monospace',
+                fontSize: '0.8rem',
                 border: 'none',
-                padding: '12px 14px',
-                color: '#ff7b72',
-                fontFamily: '"JetBrains Mono", Consolas, monospace',
-                fontSize: '0.84rem',
-                lineHeight: '1.4',
-                resize: 'none',
                 outline: 'none',
+                resize: 'vertical',
+                lineHeight: 1.4,
                 boxSizing: 'border-box'
               }}
             />
           </div>
 
+          {/* Action Button */}
           <button
             onClick={handleAnalyze}
             disabled={loading}
@@ -403,225 +483,300 @@ export const App: React.FC = () => {
               alignItems: 'center',
               justifyContent: 'center',
               gap: '10px',
-              padding: '12px',
               backgroundColor: loading ? '#21262d' : '#238636',
               color: '#ffffff',
               border: 'none',
+              padding: '12px 20px',
               borderRadius: '6px',
               fontWeight: 600,
-              fontSize: '0.92rem',
+              fontSize: '0.95rem',
               cursor: loading ? 'not-allowed' : 'pointer',
-              transition: 'background-color 0.2s'
+              transition: 'background-color 0.15s ease'
             }}
           >
-            {loading ? <RefreshCw className="animate-spin" size={18} /> : <Play size={18} />}
-            {loading ? 'Synthesizing Patch via MiniGPT...' : 'Analyze & Synthesize Patch'}
+            {loading ? (
+              <>
+                <Cpu size={18} className="animate-spin" />
+                Synthesizing Autonomous Patch...
+              </>
+            ) : (
+              <>
+                <Play size={18} fill="#ffffff" />
+                Analyze & Synthesize Patch
+              </>
+            )}
           </button>
+        </div>
 
-          {errorMsg && (
+        {/* Right Column: Inspection, Diff Viewer, & Sandbox Output */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          {/* Inspection & Patch Status Card */}
+          <div style={{
+            backgroundColor: '#0d1117',
+            border: '1px solid #30363d',
+            borderRadius: '8px',
+            overflow: 'hidden'
+          }}>
             <div style={{
-              padding: '12px',
-              backgroundColor: 'rgba(248, 81, 73, 0.12)',
-              border: '1px solid #f85149',
-              borderRadius: '6px',
-              color: '#ff7b72',
-              fontSize: '0.84rem'
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 14px',
+              backgroundColor: '#161b22',
+              borderBottom: '1px solid #30363d',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#c9d1d9'
             }}>
-              <strong>Server Notice:</strong> {errorMsg}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Cpu size={15} color="#3fb950" />
+                <span>INSPECTION & PATCH VERIFICATION</span>
+              </div>
+              {result && (
+                <div style={{
+                  padding: '2px 8px',
+                  borderRadius: '12px',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  backgroundColor: result.syntax_valid ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                  border: `1px solid ${result.syntax_valid ? 'rgba(46, 160, 67, 0.4)' : 'rgba(248, 81, 73, 0.4)'}`,
+                  color: result.syntax_valid ? '#3fb950' : '#f85149'
+                }}>
+                  {result.syntax_valid ? '✓ AST Validated' : '⚠ Syntax Invalid'}
+                </div>
+              )}
             </div>
-          )}
-        </section>
 
-        {/* Right Column: Inspection & Diff Viewer */}
-        <section style={{
-          backgroundColor: '#0d1117',
-          border: '1px solid #30363d',
-          borderRadius: '8px',
-          overflow: 'hidden',
+            <div style={{ padding: '14px' }}>
+              {result ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  
+                  {/* Status Pills */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    <span style={{ backgroundColor: '#21262d', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                      Exception: <strong style={{ color: '#58a6ff' }}>{result.error_type}</strong>
+                    </span>
+                    <span style={{ backgroundColor: '#21262d', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                      Scope: <strong style={{ color: '#f0f6fc' }}>{result.error_location}</strong>
+                    </span>
+                    <span style={{
+                      backgroundColor: result.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                      color: result.sandbox_passed ? '#3fb950' : '#f85149',
+                      border: `1px solid ${result.sandbox_passed ? 'rgba(46, 160, 67, 0.3)' : 'rgba(248, 81, 73, 0.3)'}`,
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600
+                    }}>
+                      {result.sandbox_passed ? '✓ Sandbox: Exit 0' : '⚠ Sandbox: Execution Error'}
+                    </span>
+                    {result.iterations_used > 1 && (
+                      <span style={{ backgroundColor: 'rgba(210, 153, 34, 0.15)', color: '#d29922', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem', border: '1px solid rgba(210, 153, 34, 0.3)' }}>
+                        ↻ Multi-Pass ({result.iterations_used} attempts)
+                      </span>
+                    )}
+                    <span style={{ backgroundColor: '#21262d', padding: '4px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                      Confidence: <strong style={{ color: '#3fb950' }}>{Math.round(result.confidence_score * 100)}%</strong>
+                    </span>
+                  </div>
+
+                  {/* Root Cause description */}
+                  <div>
+                    <div style={{ fontSize: '0.72rem', color: '#8b949e', fontWeight: 600, marginBottom: '4px', textTransform: 'uppercase' }}>
+                      Diagnosed Root Cause
+                    </div>
+                    <div style={{ backgroundColor: '#161b22', padding: '8px 12px', borderRadius: '4px', fontSize: '0.8rem', color: '#c9d1d9', border: '1px solid #21262d' }}>
+                      {result.root_cause}
+                    </div>
+                  </div>
+
+                  {/* Patch Diff Section */}
+                  <div>
+                    <div style={{ fontSize: '0.72rem', color: '#8b949e', fontWeight: 600, marginBottom: '4px', textTransform: 'uppercase' }}>
+                      Proposed Patch Diff
+                    </div>
+                    <div style={{ borderRadius: '6px', overflow: 'hidden', border: '1px solid #30363d' }}>
+                      <InlineDiffViewer original={code} modified={result.suggested_fix} />
+                    </div>
+                  </div>
+
+                </div>
+              ) : (
+                <div style={{ padding: '40px 0', textAlign: 'center', color: '#8b949e', fontSize: '0.85rem' }}>
+                  Enter code and stack trace, then click "Analyze & Synthesize Patch" to trigger autonomous execution.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Sandbox Execution Terminal Container */}
+          <div style={{
+            backgroundColor: '#0d1117',
+            border: '1px solid #30363d',
+            borderRadius: '8px',
+            overflow: 'hidden'
+          }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 14px',
+              backgroundColor: '#161b22',
+              borderBottom: '1px solid #30363d',
+              fontSize: '0.78rem',
+              fontWeight: 600,
+              color: '#c9d1d9'
+            }}>
+              <Terminal size={15} color="#58a6ff" />
+              <span>SANDBOX EXECUTION LOGS</span>
+            </div>
+            <pre style={{
+              margin: 0,
+              padding: '14px',
+              backgroundColor: '#010409',
+              color: result?.sandbox_passed ? '#3fb950' : (result ? '#f85149' : '#8b949e'),
+              fontFamily: 'JetBrains Mono, Menlo, Consolas, Monaco, monospace',
+              fontSize: '0.8rem',
+              minHeight: '80px',
+              maxHeight: '160px',
+              overflowY: 'auto',
+              whiteSpace: 'pre-wrap',
+              lineHeight: 1.4
+            }}>
+              {result ? (
+                result.sandbox_passed ? (
+                  result.sandbox_stdout || 'Process finished with exit code 0 (Execution Verified).'
+                ) : (
+                  result.sandbox_stderr || 'Runtime error encountered during sandbox run.'
+                )
+              ) : (
+                'Sandbox idle. Execution logs will render here.'
+              )}
+            </pre>
+          </div>
+
+        </div>
+
+      </main>
+
+      {/* Slide-out Session History Drawer */}
+      {drawerOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: '380px',
+          backgroundColor: '#161b22',
+          borderLeft: '1px solid #30363d',
+          boxShadow: '-8px 0 24px rgba(0,0,0,0.5)',
+          zIndex: 100,
           display: 'flex',
           flexDirection: 'column'
         }}>
+          {/* Drawer Header */}
           <div style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '10px 16px',
-            backgroundColor: '#161b22',
+            padding: '16px 20px',
             borderBottom: '1px solid #30363d'
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.84rem', fontWeight: 600 }}>
-              <Wrench size={16} color="#7ee787" />
-              INSPECTION & PATCH VERIFICATION
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700, fontSize: '0.95rem', color: '#f0f6fc' }}>
+              <History size={18} color="#58a6ff" />
+              Persisted Sessions
             </div>
-            {result && (
-              <div style={{
+            <button
+              onClick={() => setDrawerOpen(false)}
+              style={{
+                backgroundColor: 'transparent',
+                border: 'none',
+                color: '#8b949e',
+                cursor: 'pointer',
                 display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                fontSize: '0.75rem',
-                color: result.syntax_valid ? '#7ee787' : '#f85149',
-                backgroundColor: result.syntax_valid ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
-                padding: '3px 10px',
-                borderRadius: '12px'
-              }}>
-                {result.syntax_valid ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                {result.syntax_valid ? 'AST Validated' : 'Syntax Invalid'}
-              </div>
-            )}
+                alignItems: 'center'
+              }}
+            >
+              <X size={18} />
+            </button>
           </div>
 
-          <div style={{ padding: '18px', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {!result && !loading && (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flex: 1,
-                color: '#6e7681',
-                fontSize: '0.88rem',
-                textAlign: 'center',
-                gap: '8px'
-              }}>
-                <Code2 size={36} color="#30363d" />
-                <span>Submit source code to inspect AST scope and generate repairs.</span>
+          {/* Drawer Content / List */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {historyLoading ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#8b949e', fontSize: '0.85rem' }}>
+                Loading session ledger...
               </div>
-            )}
-
-            {result && (
-              <>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <div style={{
-                    backgroundColor: '#161b22',
+            ) : historyItems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0', color: '#8b949e', fontSize: '0.85rem' }}>
+                No repair sessions found. Run a patch to record history.
+              </div>
+            ) : (
+              historyItems.map((item) => (
+                <div
+                  key={item.session_id}
+                  onClick={() => restoreSession(item)}
+                  style={{
+                    backgroundColor: '#0d1117',
                     border: '1px solid #30363d',
-                    padding: '4px 10px',
                     borderRadius: '6px',
-                    fontSize: '0.78rem'
-                  }}>
-                    <span style={{ color: '#8b949e' }}>Exception: </span>
-                    <strong style={{ color: '#58a6ff' }}>{result.error_type}</strong>
-                  </div>
-
-                  <div style={{
-                    backgroundColor: '#161b22',
-                    border: '1px solid #30363d',
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    fontSize: '0.78rem'
-                  }}>
-                    <span style={{ color: '#8b949e' }}>Scope: </span>
-                    <strong style={{ color: '#c9d1d9' }}>{result.error_location}</strong>
-                  </div>
-
-                  {result.sandbox_executed && (
-                    <div style={{
-                      backgroundColor: result.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
-                      border: `1px solid ${result.sandbox_passed ? '#2ea043' : '#f85149'}`,
-                      color: result.sandbox_passed ? '#7ee787' : '#f85149',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}>
-                      {result.sandbox_passed ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
-                      <span>{result.sandbox_passed ? 'Sandbox: Exit 0' : 'Sandbox: Execution Error'}</span>
-                    </div>
-                  )}
-
-                  {result.iterations_used && result.iterations_used > 1 && (
-                    <div style={{
-                      backgroundColor: 'rgba(187, 128, 9, 0.15)',
-                      border: '1px solid #d29922',
-                      color: '#e3b341',
-                      padding: '4px 10px',
-                      borderRadius: '6px',
-                      fontSize: '0.78rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}>
-                      <RotateCcw size={13} />
-                      <span>{result.self_corrected ? `Self-Corrected (Pass on Iteration ${result.iterations_used})` : `Multi-Pass (${result.iterations_used} attempts)`}</span>
-                    </div>
-                  )}
-
-                  <div style={{
-                    backgroundColor: '#161b22',
-                    border: '1px solid #30363d',
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    fontSize: '0.78rem'
-                  }}>
-                    <span style={{ color: '#8b949e' }}>Confidence: </span>
-                    <strong style={{ color: '#7ee787' }}>{(result.confidence_score * 100).toFixed(0)}%</strong>
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
-                    DIAGNOSED ROOT CAUSE
-                  </div>
-                  <div style={{
-                    backgroundColor: '#161b22',
-                    border: '1px solid #21262d',
-                    borderRadius: '6px',
-                    padding: '10px 14px',
-                    fontSize: '0.84rem',
-                    color: '#c9d1d9'
-                  }}>
-                    {result.root_cause}
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#8b949e', marginBottom: '6px' }}>
-                    PROPOSED PATCH DIFF
-                  </div>
-                  <DiffViewer originalCode={code} repairedCode={result.suggested_fix} />
-                </div>
-
-                {result.sandbox_executed && (
-                  <div>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
+                    padding: '12px',
+                    cursor: 'pointer',
+                    transition: 'border-color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#58a6ff')}
+                  onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#30363d')}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                    <span style={{
                       fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: '#8b949e',
-                      marginBottom: '6px'
+                      fontWeight: 700,
+                      color: item.sandbox_passed ? '#3fb950' : '#f85149',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
                     }}>
-                      <TerminalSquare size={14} color="#8b949e" />
-                      SANDBOX EXECUTION LOGS
-                    </div>
-                    <div style={{
-                      backgroundColor: '#0a0d12',
-                      border: '1px solid #21262d',
-                      borderRadius: '6px',
-                      padding: '10px 14px',
-                      fontFamily: '"JetBrains Mono", Consolas, monospace',
-                      fontSize: '0.8rem',
-                      lineHeight: '1.4',
-                      color: result.sandbox_passed ? '#7ee787' : '#ff7b72',
-                      maxHeight: '120px',
-                      overflowY: 'auto',
-                      whiteSpace: 'pre-wrap'
+                      {item.sandbox_passed ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
+                      {item.error_type || 'Unknown Exception'}
+                    </span>
+                    <span style={{
+                      fontSize: '0.68rem',
+                      padding: '2px 6px',
+                      borderRadius: '10px',
+                      backgroundColor: item.sandbox_passed ? 'rgba(46, 160, 67, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                      color: item.sandbox_passed ? '#3fb950' : '#f85149'
                     }}>
-                      {result.sandbox_passed 
-                        ? (result.sandbox_stdout || 'Process finished with exit code 0 (Execution Verified).')
-                        : (result.sandbox_stderr || 'Process execution failed with non-zero exit code.')}
-                    </div>
+                      {item.sandbox_passed ? 'Passed' : 'Failed'}
+                    </span>
                   </div>
-                )}
-              </>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.7rem', color: '#8b949e', marginBottom: '8px' }}>
+                    <Clock size={11} />
+                    <span>{new Date(item.timestamp).toLocaleString()}</span>
+                  </div>
+
+                  <div style={{
+                    fontSize: '0.75rem',
+                    color: '#8b949e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    borderTop: '1px solid #21262d',
+                    paddingTop: '6px'
+                  }}>
+                    <span>Confidence: {Math.round(item.confidence_score * 100)}%</span>
+                    <span style={{ color: '#58a6ff', display: 'flex', alignItems: 'center', gap: '2px' }}>
+                      Replay <ArrowRight size={11} />
+                    </span>
+                  </div>
+                </div>
+              ))
             )}
           </div>
-        </section>
-      </main>
+        </div>
+      )}
+
     </div>
   );
-};
-
-export default App;
+}

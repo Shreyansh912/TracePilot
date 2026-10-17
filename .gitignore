@@ -1,25 +1,28 @@
-﻿__pycache__/
-*.py[cod]
-*.class
-*.so
-.Python
-env/
+﻿# Python Virtual Environments & Caches
 venv/
 .venv/
-*.pt
-*.pth
-*.bin
-*.onnx
-llm/checkpoints/*
-!llm/checkpoints/.gitkeep
-datasets/raw/*
-!datasets/raw/.gitkeep
-datasets/processed/*
-!datasets/processed/.gitkeep
-.env
-.env.local
+env/
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+
+# Large Model Weights (Keep code, exclude multi-megabyte weights)
+llm/checkpoints/*.pt
+llm/checkpoints/*.pth
+llm/checkpoints/*.bin
+*.safetensors
+
+# Frontend & Dependencies
+node_modules/
+dist/
+build/
+.next/
+
+# Large Raw Datasets & System Files
+datasets/raw/
+*.jsonl
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
-build/
-dist/
-*.egg-info/

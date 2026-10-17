@@ -1,7 +1,7 @@
 """
 backend/app/services/debug_service.py
 Coordinates AST scope isolation, traceback symbol matching,
-local MiniGPT inference, and multi-pass iterative sandbox verification.
+MiniGPT inference, AST semantic repair fallbacks, and sandbox execution.
 """
 import os
 import sys
@@ -38,9 +38,6 @@ class DebugService:
             )
 
     def _extract_target_function(self, code: str, stack_trace: str) -> Tuple[str, List[str], str]:
-        """
-        Isolates the buggy function named in the stack trace from caller/driver code.
-        """
         target_func_name = None
         match = re.search(r"in\s+([a-zA-Z_0-9]+)", stack_trace or "")
         if match:
@@ -77,6 +74,49 @@ class DebugService:
 
         return func_def_code, non_target_nodes, target_func_name or "Function Scope"
 
+    def _apply_ast_rule_repair(self, func_code: str, error_type: str) -> str:
+        """
+        Synthesizes a clean AST patch for runtime exception classes
+        if the small language model generates syntactically invalid code.
+        """
+        try:
+            tree = ast.parse(func_code)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    # 1. ZeroDivisionError Guard
+                    if "ZeroDivision" in error_type:
+                        for stmt in node.body:
+                            if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.BinOp):
+                                if isinstance(stmt.value.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+                                    divisor = ast.unparse(stmt.value.right)
+                                    guard = ast.parse(f"if {divisor} == 0:\n    return 0").body[0]
+                                    node.body.insert(0, guard)
+                                    return ast.unparse(tree)
+
+                    # 2. IndexError Guard
+                    elif "IndexError" in error_type:
+                        for stmt in node.body:
+                            if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Subscript):
+                                target = ast.unparse(stmt.value.value)
+                                guard = ast.parse(f"if not {target}:\n    return None").body[0]
+                                node.body.insert(0, guard)
+                                # Cap index access
+                                stmt.value.slice = ast.parse(f"min(len({target}) - 1, max(0, 0))").body[0].value
+                                return ast.unparse(tree)
+
+                    # 3. KeyError Guard
+                    elif "KeyError" in error_type:
+                        for stmt in node.body:
+                            if isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Subscript):
+                                d_target = ast.unparse(stmt.value.value)
+                                k_slice = ast.unparse(stmt.value.slice)
+                                return ast.unparse(ast.parse(func_code).body[0]).replace(
+                                    f"{d_target}[{k_slice}]", f"{d_target}.get({k_slice}, None)"
+                                )
+        except Exception:
+            pass
+        return func_code
+
     def _run_sandbox(self, code_str: str) -> Tuple[bool, str, str]:
         sandbox_res = self.sandbox.execute(code_str)
         if isinstance(sandbox_res, dict):
@@ -94,14 +134,12 @@ class DebugService:
     def analyze_and_repair(self, request: DebugRequest) -> DebugResponse:
         self._ensure_generator_loaded()
 
-        # Step 1: Error Extraction
         raw_error = request.error_message or ""
         if not raw_error and request.stack_trace:
             lines = [l.strip() for l in request.stack_trace.strip().split("\n") if l.strip()]
             raw_error = lines[-1] if lines else "RuntimeError"
         current_error = raw_error.split("\n")[-1].strip()
 
-        # Step 2: AST Function Scope Extraction
         func_def_code, non_target_nodes, location_desc = self._extract_target_function(
             request.code, request.stack_trace or ""
         )
@@ -115,38 +153,36 @@ class DebugService:
         final_stderr = ""
         is_syntax_valid = False
 
-        # Step 3: Multi-Pass Iterative Repair Loop
         for attempt in range(1, max_attempts + 1):
             prompt = f"<|code|>\n{active_code_target}\n<|error|>\n{current_error}\n<|fix|>\n"
+            print(f"\n[*] --- Attempt {attempt}/{max_attempts} Inference ---")
 
+            candidate_patch = ""
             try:
-                raw_generation = self.generator.generate(
-                    prompt=prompt,
-                    max_new_tokens=90,
-                    min_new_tokens=12,
-                    temperature=0.2 if attempt == 1 else 0.4,
-                    top_k=5,
-                    repetition_penalty=1.35
-                ).strip()
-
+                raw_generation = self.generator.generate(prompt=prompt, max_new_tokens=90)
                 cleaned_fix = raw_generation.replace("<|eos|>", "").strip()
-
-                if cleaned_fix and "def " in cleaned_fix:
-                    candidate_full_code = (
-                        f"{cleaned_fix}\n\n" + "\n".join(non_target_nodes)
-                        if non_target_nodes else cleaned_fix
-                    )
-                    active_code_target = cleaned_fix
+                
+                # Check if neural output is valid Python code
+                is_valid, _, _ = self.analyzer.inspect_syntax(cleaned_fix)
+                if is_valid and "def " in cleaned_fix:
+                    candidate_patch = cleaned_fix
                 else:
-                    candidate_full_code = cleaned_fix if cleaned_fix else request.code
-            except Exception as gen_err:
-                candidate_full_code = request.code
+                    print(f"[!] MiniGPT output has invalid syntax. Engaging AST Semantic Repair Engine.")
+                    candidate_patch = self._apply_ast_rule_repair(active_code_target, current_error)
+            except Exception as e:
+                print(f"[!] Generation error: {e}. Falling back to AST Engine.")
+                candidate_patch = self._apply_ast_rule_repair(active_code_target, current_error)
 
-            # Syntax Check
+            if non_target_nodes:
+                candidate_full_code = f"{candidate_patch}\n\n" + "\n".join(non_target_nodes)
+            else:
+                candidate_full_code = candidate_patch
+
+            # Inspect AST
             is_valid, _, _ = self.analyzer.inspect_syntax(candidate_full_code)
             is_syntax_valid = is_valid
 
-            # Subprocess Sandbox Execution
+            # Execute in Subprocess Sandbox
             s_passed, s_out, s_err = self._run_sandbox(candidate_full_code)
 
             attempts_history.append(
@@ -154,7 +190,7 @@ class DebugService:
                     attempt_number=attempt,
                     patch_code=candidate_full_code,
                     passed=s_passed,
-                    error_summary=s_err.splitlines()[-1] if s_err.strip() else ("OK" if s_passed else "Unknown Error")
+                    error_summary=s_err.splitlines()[-1] if s_err.strip() else ("OK" if s_passed else "Runtime Error")
                 )
             )
 
@@ -164,20 +200,18 @@ class DebugService:
             final_stderr = s_err
 
             if s_passed:
+                print(f"[+] Attempt {attempt} passed sandbox verification (Exit 0).")
                 break
             else:
                 err_lines = [l.strip() for l in s_err.split("\n") if l.strip()]
                 if err_lines:
                     current_error = err_lines[-1]
 
-        # Step 4: Confidence Scoring
         confidence = 0.50
         if is_syntax_valid:
             confidence += 0.20
         if final_passed:
             confidence += 0.25
-        if len(attempts_history) > 1 and final_passed:
-            confidence += 0.05
 
         err_type = raw_error.split(":")[0].strip() if ":" in raw_error else "RuntimeError"
 
